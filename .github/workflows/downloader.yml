@@ -1,4 +1,4 @@
-name: API Video Downloader
+name: Simple Video Downloader
 
 on:
   repository_dispatch:
@@ -21,49 +21,44 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set Variables
-      id: vars
       run: |
         if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-          echo "Triggered via API"
           echo "URL=${{ github.event.client_payload.video_url }}" >> $GITHUB_ENV
           echo "FMT=${{ github.event.client_payload.format_code || 'bv+ba/b' }}" >> $GITHUB_ENV
         else
-          echo "Triggered via Manual Button"
           echo "URL=${{ inputs.video_url }}" >> $GITHUB_ENV
           echo "FMT=${{ inputs.format_code }}" >> $GITHUB_ENV
         fi
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Set up Python
+    - name: Set up Python & Node
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-
-    - name: Install Tools
+    
+    - name: Install FFmpeg & yt-dlp
       run: |
         sudo apt-get update && sudo apt-get install -y ffmpeg
         pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
     - name: Download Video
-      # HAPUS BAGIAN COOKIES (Penyebab konflik dengan Android Client)
+      env:
+        MY_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
       run: |
         mkdir downloads
-        echo "Processing: $URL"
         
-        # MENGGUNAKAN ANDROID CLIENT TANPA COOKIES
-        # Ini adalah cara paling ampuh untuk server IP (GitHub/VPS)
+        # 1. Buat file cookies.txt dari Secret
+        echo "$MY_COOKIES" > cookies.txt
         
-        yt-dlp "$URL" \
+        echo "Menjalankan perintah: yt-dlp --cookies cookies.txt \"$URL\""
+
+        # 2. Jalankan perintah standar
+        yt-dlp \
+          --cookies cookies.txt \
           -f "$FMT" \
           --merge-output-format mp4 \
           -o "downloads/%(title)s.%(ext)s" \
           --no-playlist \
-          --extractor-args "youtube:player_client=android" \
-          --user-agent "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+          "$URL"
 
     - name: Upload to R2
       env:
@@ -71,13 +66,10 @@ jobs:
         AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY }}
         AWS_DEFAULT_REGION: auto
       run: |
-        echo "Mengupload ke Bucket..."
         ENDPOINT_URL="https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-        
         aws s3 cp downloads/ s3://${{ secrets.R2_BUCKET_NAME }}/ --recursive --endpoint-url $ENDPOINT_URL --no-progress
-        
-        echo "Upload Selesai!"
+        echo "Upload Selesai"
 
     - name: Cleanup
       if: always()
-      run: rm -rf downloads
+      run: rm -rf downloads cookies.txt
