@@ -1,27 +1,44 @@
-name: YT-DLP to Cloudflare R2 (Fix Bot Detection)
+name: API Video Downloader
 
 on:
+  # Trigger 1: Untuk API (Webhook)
+  repository_dispatch:
+    types: [download-video-request]
+  
+  # Trigger 2: Untuk Manual (Klik di GitHub)
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'Masukkan URL Video'
+        description: 'URL Video'
         required: true
-        type: string
       format_code:
-        description: 'Format (Default: Best Video+Audio -> MP4)'
-        required: false
+        description: 'Format'
         default: 'bv+ba/b'
-        type: string
 
 jobs:
-  download_and_upload:
+  process_video:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # FIX 1: Install Node.js (Wajib untuk yt-dlp memproses JavaScript YouTube)
+    # --- LOGIC PENENTUAN URL ---
+    # Kita cek apakah trigger dari API (payload) atau Manual (inputs)
+    - name: Set Variables
+      id: vars
+      run: |
+        if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+          echo "Triggered via API"
+          echo "URL=${{ github.event.client_payload.video_url }}" >> $GITHUB_ENV
+          echo "FMT=${{ github.event.client_payload.format_code || 'bv+ba/b' }}" >> $GITHUB_ENV
+        else
+          echo "Triggered via Manual Button"
+          echo "URL=${{ inputs.video_url }}" >> $GITHUB_ENV
+          echo "FMT=${{ inputs.format_code }}" >> $GITHUB_ENV
+        fi
+
+    # Setup Environment (Sama seperti sebelumnya)
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -31,56 +48,44 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    
-    - name: Install FFmpeg
+
+    - name: Install Tools
       run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+        sudo apt-get update && sudo apt-get install -y ffmpeg
+        pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
-    # Gunakan versi master/nightly agar dapat patch anti-bot terbaru
-    - name: Install yt-dlp (Nightly)
-      run: pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
-
-    # FIX 2: Bikin file cookies.txt jika Secret ada
     - name: Create Cookies File
       if: ${{ secrets.YOUTUBE_COOKIES != '' }}
       run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
+    # Download menggunakan Variable $URL yang sudah diset di atas
     - name: Download Video
       run: |
         mkdir downloads
         
-        # Cek apakah cookies ada
-        if [ -f "cookies.txt" ]; then
-          COOKIE_CMD="--cookies cookies.txt"
-          echo "Menggunakan Cookies..."
-        else
-          COOKIE_CMD=""
-          echo "Tanpa Cookies (Risiko Bot Detection tinggi)..."
-        fi
+        if [ -f "cookies.txt" ]; then COOKIE_CMD="--cookies cookies.txt"; fi
 
-        # Menambahkan User Agent palsu agar terlihat seperti browser biasa
-        yt-dlp "${{ inputs.video_url }}" \
+        echo "Processing: $URL"
+        
+        yt-dlp "$URL" \
           $COOKIE_CMD \
-          -f "${{ inputs.format_code }}" \
+          -f "$FMT" \
           --merge-output-format mp4 \
           -o "downloads/%(title)s.%(ext)s" \
           --no-playlist \
           --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    - name: Upload to Cloudflare R2
+    # Upload ke Cloudflare R2
+    - name: Upload to R2
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY }}
         AWS_DEFAULT_REGION: auto
       run: |
-        echo "Mengupload ke Bucket: ${{ secrets.R2_BUCKET_NAME }}..."
         ENDPOINT_URL="https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com"
         aws s3 cp downloads/ s3://${{ secrets.R2_BUCKET_NAME }}/ --recursive --endpoint-url $ENDPOINT_URL --no-progress
-        echo "Upload Selesai!"
+        echo "Upload Done"
 
     - name: Cleanup
       if: always()
-      run: |
-        rm -rf downloads
-        rm -f cookies.txt
+      run: rm -rf downloads cookies.txt
