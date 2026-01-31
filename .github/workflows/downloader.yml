@@ -1,11 +1,8 @@
 name: API Video Downloader
 
 on:
-  # Trigger 1: Untuk API (Webhook)
   repository_dispatch:
     types: [download-video-request]
-  
-  # Trigger 2: Untuk Manual (Klik di GitHub)
   workflow_dispatch:
     inputs:
       video_url:
@@ -23,8 +20,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # --- LOGIC PENENTUAN URL ---
-    # Kita cek apakah trigger dari API (payload) atau Manual (inputs)
     - name: Set Variables
       id: vars
       run: |
@@ -38,7 +33,6 @@ jobs:
           echo "FMT=${{ inputs.format_code }}" >> $GITHUB_ENV
         fi
 
-    # Setup Environment (Sama seperti sebelumnya)
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -54,16 +48,25 @@ jobs:
         sudo apt-get update && sudo apt-get install -y ffmpeg
         pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
+    # --- BAGIAN YANG DIPERBAIKI ---
     - name: Create Cookies File
-      if: ${{ secrets.YOUTUBE_COOKIES != '' }}
+      # HAPUS tanda ${{ }} di baris if
+      if: secrets.YOUTUBE_COOKIES != '' 
       run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+    # -----------------------------
 
-    # Download menggunakan Variable $URL yang sudah diset di atas
     - name: Download Video
       run: |
         mkdir downloads
         
-        if [ -f "cookies.txt" ]; then COOKIE_CMD="--cookies cookies.txt"; fi
+        # Cek apakah file cookies berhasil dibuat
+        if [ -f "cookies.txt" ]; then 
+          COOKIE_CMD="--cookies cookies.txt"
+          echo "Cookies detected. Using authentication."
+        else
+          COOKIE_CMD=""
+          echo "No cookies found."
+        fi
 
         echo "Processing: $URL"
         
@@ -75,7 +78,6 @@ jobs:
           --no-playlist \
           --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    # Upload ke Cloudflare R2
     - name: Upload to R2
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY }}
