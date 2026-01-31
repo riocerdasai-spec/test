@@ -1,0 +1,59 @@
+name: YT-DLP Downloader
+
+# Trigger: Manual input via tab "Actions"
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Masukkan URL Video'
+        required: true
+        type: string
+      format_code:
+        description: 'Format (Default: Best Video+Audio -> MP4)'
+        required: false
+        default: 'bv+ba/b'
+        type: string
+
+jobs:
+  download_job:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Checkout kode (standar)
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. Install Python
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    # 3. Install FFmpeg (Wajib untuk merge audio/video)
+    - name: Install FFmpeg
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
+    # 4. Install yt-dlp
+    - name: Install yt-dlp
+      run: pip install yt-dlp
+
+    # 5. Eksekusi Download
+    # Kita simpan hasilnya di folder 'downloads' agar mudah di-upload nanti
+    - name: Run Download
+      run: |
+        mkdir downloads
+        yt-dlp "${{ inputs.video_url }}" \
+          -f "${{ inputs.format_code }}" \
+          --merge-output-format mp4 \
+          -o "downloads/%(title)s.%(ext)s"
+
+    # 6. Upload hasil sebagai Artifact
+    # Hasil download akan tersedia sebagai file ZIP di ringkasan workflow
+    - name: Upload Video Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: video-result
+        path: downloads/
+        retention-days: 1 # File akan otomatis dihapus setelah 1 hari
