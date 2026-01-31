@@ -1,11 +1,8 @@
 name: API Video Downloader
 
 on:
-  # Trigger 1: Untuk API (Webhook)
   repository_dispatch:
     types: [download-video-request]
-  
-  # Trigger 2: Untuk Manual (Klik di GitHub)
   workflow_dispatch:
     inputs:
       video_url:
@@ -23,7 +20,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 1. Logika untuk menentukan URL (dari API atau Manual)
     - name: Set Variables
       id: vars
       run: |
@@ -37,7 +33,6 @@ jobs:
           echo "FMT=${{ inputs.format_code }}" >> $GITHUB_ENV
         fi
 
-    # 2. Setup Environment
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -48,44 +43,28 @@ jobs:
       with:
         python-version: '3.10'
 
-    # 3. Install FFmpeg & yt-dlp (Versi Master/Nightly)
     - name: Install Tools
       run: |
         sudo apt-get update && sudo apt-get install -y ffmpeg
         pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
-    # 4. Download Video (Dengan Fix Android Client & Safe Cookie Check)
     - name: Download Video
-      env:
-        # Mengambil secret ke variable environment (Aman dari error syntax YAML)
-        MY_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+      # HAPUS BAGIAN COOKIES (Penyebab konflik dengan Android Client)
       run: |
         mkdir downloads
-        
-        # Cek apakah cookies ada isinya
-        if [ -n "$MY_COOKIES" ]; then
-          echo "$MY_COOKIES" > cookies.txt
-          COOKIE_CMD="--cookies cookies.txt"
-          echo "✅ Cookies ditemukan. Menggunakan autentikasi."
-        else
-          COOKIE_CMD=""
-          echo "⚠️ Cookies kosong. Mencoba download tanpa login."
-        fi
-
         echo "Processing: $URL"
         
-        # COMMAND UTAMA
-        # --extractor-args "youtube:player_client=android" adalah kunci bypass error "Only images"
+        # MENGGUNAKAN ANDROID CLIENT TANPA COOKIES
+        # Ini adalah cara paling ampuh untuk server IP (GitHub/VPS)
         
         yt-dlp "$URL" \
-          $COOKIE_CMD \
           -f "$FMT" \
           --merge-output-format mp4 \
           -o "downloads/%(title)s.%(ext)s" \
           --no-playlist \
-          --extractor-args "youtube:player_client=android"
+          --extractor-args "youtube:player_client=android" \
+          --user-agent "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
-    # 5. Upload ke Cloudflare R2
     - name: Upload to R2
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY }}
@@ -99,7 +78,6 @@ jobs:
         
         echo "Upload Selesai!"
 
-    # 6. Bersih-bersih
     - name: Cleanup
       if: always()
-      run: rm -rf downloads cookies.txt
+      run: rm -rf downloads
