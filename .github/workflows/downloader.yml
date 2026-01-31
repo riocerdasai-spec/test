@@ -1,6 +1,5 @@
-name: YT-DLP Downloader
+name: YT-DLP to Cloudflare R2 (Fix Bot Detection)
 
-# Trigger: Manual input via tab "Actions"
 on:
   workflow_dispatch:
     inputs:
@@ -15,45 +14,73 @@ on:
         type: string
 
 jobs:
-  download_job:
+  download_and_upload:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Checkout kode (standar)
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 2. Install Python
+    # FIX 1: Install Node.js (Wajib untuk yt-dlp memproses JavaScript YouTube)
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-
-    # 3. Install FFmpeg (Wajib untuk merge audio/video)
+    
     - name: Install FFmpeg
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
 
-    # 4. Install yt-dlp
-    - name: Install yt-dlp
-      run: pip install yt-dlp
+    # Gunakan versi master/nightly agar dapat patch anti-bot terbaru
+    - name: Install yt-dlp (Nightly)
+      run: pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
-    # 5. Eksekusi Download
-    # Kita simpan hasilnya di folder 'downloads' agar mudah di-upload nanti
-    - name: Run Download
+    # FIX 2: Bikin file cookies.txt jika Secret ada
+    - name: Create Cookies File
+      if: ${{ secrets.YOUTUBE_COOKIES != '' }}
+      run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+
+    - name: Download Video
       run: |
         mkdir downloads
+        
+        # Cek apakah cookies ada
+        if [ -f "cookies.txt" ]; then
+          COOKIE_CMD="--cookies cookies.txt"
+          echo "Menggunakan Cookies..."
+        else
+          COOKIE_CMD=""
+          echo "Tanpa Cookies (Risiko Bot Detection tinggi)..."
+        fi
+
+        # Menambahkan User Agent palsu agar terlihat seperti browser biasa
         yt-dlp "${{ inputs.video_url }}" \
+          $COOKIE_CMD \
           -f "${{ inputs.format_code }}" \
           --merge-output-format mp4 \
-          -o "downloads/%(title)s.%(ext)s"
+          -o "downloads/%(title)s.%(ext)s" \
+          --no-playlist \
+          --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    # 6. Upload hasil sebagai Artifact
-    # Hasil download akan tersedia sebagai file ZIP di ringkasan workflow
-    - name: Upload Video Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: video-result
-        path: downloads/
-        retention-days: 1 # File akan otomatis dihapus setelah 1 hari
+    - name: Upload to Cloudflare R2
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY }}
+        AWS_DEFAULT_REGION: auto
+      run: |
+        echo "Mengupload ke Bucket: ${{ secrets.R2_BUCKET_NAME }}..."
+        ENDPOINT_URL="https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+        aws s3 cp downloads/ s3://${{ secrets.R2_BUCKET_NAME }}/ --recursive --endpoint-url $ENDPOINT_URL --no-progress
+        echo "Upload Selesai!"
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf downloads
+        rm -f cookies.txt
