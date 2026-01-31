@@ -1,8 +1,11 @@
 name: API Video Downloader
 
 on:
+  # Trigger 1: Untuk API (Webhook)
   repository_dispatch:
     types: [download-video-request]
+  
+  # Trigger 2: Untuk Manual (Klik di GitHub)
   workflow_dispatch:
     inputs:
       video_url:
@@ -20,6 +23,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # 1. Logika untuk menentukan URL (dari API atau Manual)
     - name: Set Variables
       id: vars
       run: |
@@ -33,6 +37,7 @@ jobs:
           echo "FMT=${{ inputs.format_code }}" >> $GITHUB_ENV
         fi
 
+    # 2. Setup Environment
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -43,24 +48,21 @@ jobs:
       with:
         python-version: '3.10'
 
+    # 3. Install FFmpeg & yt-dlp (Versi Master/Nightly)
     - name: Install Tools
       run: |
         sudo apt-get update && sudo apt-get install -y ffmpeg
         pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
-    # --- PERBAIKAN TOTAL DI SINI ---
-    # Kita hapus step "Create Cookies" terpisah yang bikin error.
-    # Logic digabung langsung ke step Download menggunakan Environment Variable.
-    
+    # 4. Download Video (Dengan Fix Android Client & Safe Cookie Check)
     - name: Download Video
       env:
-        # Masukkan secret ke Environment Variable (Safe Way)
-        # Jika secret kosong, variable ini akan jadi string kosong (aman, tidak error)
+        # Mengambil secret ke variable environment (Aman dari error syntax YAML)
         MY_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
       run: |
         mkdir downloads
         
-        # Logic Bash: Cek apakah variable MY_COOKIES ada isinya (-n)
+        # Cek apakah cookies ada isinya
         if [ -n "$MY_COOKIES" ]; then
           echo "$MY_COOKIES" > cookies.txt
           COOKIE_CMD="--cookies cookies.txt"
@@ -72,25 +74,32 @@ jobs:
 
         echo "Processing: $URL"
         
-        # Jalankan yt-dlp
+        # COMMAND UTAMA
+        # --extractor-args "youtube:player_client=android" adalah kunci bypass error "Only images"
+        
         yt-dlp "$URL" \
           $COOKIE_CMD \
           -f "$FMT" \
           --merge-output-format mp4 \
           -o "downloads/%(title)s.%(ext)s" \
           --no-playlist \
-          --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          --extractor-args "youtube:player_client=android"
 
+    # 5. Upload ke Cloudflare R2
     - name: Upload to R2
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY }}
         AWS_DEFAULT_REGION: auto
       run: |
+        echo "Mengupload ke Bucket..."
         ENDPOINT_URL="https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+        
         aws s3 cp downloads/ s3://${{ secrets.R2_BUCKET_NAME }}/ --recursive --endpoint-url $ENDPOINT_URL --no-progress
-        echo "Upload Done"
+        
+        echo "Upload Selesai!"
 
+    # 6. Bersih-bersih
     - name: Cleanup
       if: always()
       run: rm -rf downloads cookies.txt
