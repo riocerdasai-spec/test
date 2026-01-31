@@ -48,28 +48,31 @@ jobs:
         sudo apt-get update && sudo apt-get install -y ffmpeg
         pip install https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
-    # --- BAGIAN YANG DIPERBAIKI ---
-    - name: Create Cookies File
-      # HAPUS tanda ${{ }} di baris if
-      if: secrets.YOUTUBE_COOKIES != '' 
-      run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
-    # -----------------------------
-
+    # --- PERBAIKAN TOTAL DI SINI ---
+    # Kita hapus step "Create Cookies" terpisah yang bikin error.
+    # Logic digabung langsung ke step Download menggunakan Environment Variable.
+    
     - name: Download Video
+      env:
+        # Masukkan secret ke Environment Variable (Safe Way)
+        # Jika secret kosong, variable ini akan jadi string kosong (aman, tidak error)
+        MY_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
       run: |
         mkdir downloads
         
-        # Cek apakah file cookies berhasil dibuat
-        if [ -f "cookies.txt" ]; then 
+        # Logic Bash: Cek apakah variable MY_COOKIES ada isinya (-n)
+        if [ -n "$MY_COOKIES" ]; then
+          echo "$MY_COOKIES" > cookies.txt
           COOKIE_CMD="--cookies cookies.txt"
-          echo "Cookies detected. Using authentication."
+          echo "✅ Cookies ditemukan. Menggunakan autentikasi."
         else
           COOKIE_CMD=""
-          echo "No cookies found."
+          echo "⚠️ Cookies kosong. Mencoba download tanpa login."
         fi
 
         echo "Processing: $URL"
         
+        # Jalankan yt-dlp
         yt-dlp "$URL" \
           $COOKIE_CMD \
           -f "$FMT" \
